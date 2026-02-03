@@ -1,0 +1,19 @@
+{
+    "name": "modern-cpp-game-demo",
+    "version-string": "0.1.0",
+    "maintainers": "Terens Tare",
+    "description": "A quick demo showing how you can use C++20 coroutines, EnTT and SDL3 for game development.",
+    "license": "MIT",
+    "dependencies": [
+        "entt",
+        "sdl3",
+        {
+            "name": "imgui",
+            "features": [
+                "docking-experimental",
+                "sdl3-binding",
+                "sdl3-renderer-binding"
+            ]
+        }
+    ]
+}
