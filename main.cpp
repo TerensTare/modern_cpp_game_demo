@@ -61,6 +61,7 @@ auto imgui_system(scheduler &sched, context &ctx, SDL_Window *win, SDL_Renderer 
         if (ImGui::Begin("Help"))
         {
             ImGui::Text("This app is a quick demo that shows how to use coroutines for gamedev.");
+            ImGui::Text("Try and click anywhere in the window and see what happens :).");
             ImGui::Text("In the code you will see two kinds of coroutines: task<T> and fire_and_forget.");
             ImGui::Text("task<T> is just a computation that can be co_awaited and might have a value or void.");
             ImGui::Text("fire_and_forget is a computation without a value that you don't care to wait for.");
