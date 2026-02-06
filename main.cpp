@@ -12,8 +12,9 @@
 #include "coro/scheduler.hpp"
 #include "coro/fire_and_forget.hpp"
 #include "coro/profiler_gui.hpp"
-#include "coro/task.hpp"
 #include "coro/timeout.hpp"
+
+#include "demo/text.hpp"
 
 // TODO:
 // - async file loading
@@ -35,6 +36,13 @@ struct speed final
 {
     float s; // pixels per second
 };
+
+#define NAMED_STAGE(x) []                                         \
+{                                                                 \
+    return stage_id{entt::hashed_string::value(x, std::size(x))}; \
+}()
+
+auto constexpr imgui_stage = NAMED_STAGE("imgui");
 
 // demo: adding Dear ImGui to your game
 auto imgui_system(scheduler &sched, context &ctx, SDL_Window *win, SDL_Renderer *ren) -> fire_and_forget
@@ -58,24 +66,7 @@ auto imgui_system(scheduler &sched, context &ctx, SDL_Window *win, SDL_Renderer 
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
 
-        if (ImGui::Begin("Help"))
-        {
-            ImGui::Text("This app is a quick demo that shows how to use coroutines for gamedev.");
-            ImGui::Text("Try and click anywhere in the window and see what happens :).");
-            ImGui::Text("In the code you will see two kinds of coroutines: task<T> and fire_and_forget.");
-            ImGui::Text("task<T> is just a computation that can be co_awaited and might have a value or void.");
-            ImGui::Text("fire_and_forget is a computation without a value that you don't care to wait for.");
-            ImGui::Text("Coroutines are scheduled into stages (startup, update, render, cleanup) by default but you can bring your own coroutine types and add your own stages as well.");
-            ImGui::Text("You can either schedule coroutines next time a stage runs with `co_await stage.sched()`");
-            ImGui::Text("or wait for some time with `co_await stage.sleep(timeInMs)`");
-            ImGui::Text("Additionally, you can trigger and wait for events with event<T>");
-            ImGui::Text("Finally, you can timeout coroutines if they run for too long with `timeout`; see `timeout_showcase` in the code to learn how.");
-            ImGui::Text("You can see an additional window here with a small WIP profiler, no need to annotate your code to use it. Enjoy :).");
-        }
-        ImGui::End();
-
-        // your widgets go here
-        coroutine_profiler(ctx.traces);
+        sched.stages[imgui_stage].run(ctx);
 
         ImGui::Render();
 
@@ -122,11 +113,16 @@ auto render_task(scheduler &sched, entt::registry &reg, SDL_Renderer *ren) -> fi
 
         pos_to_rect(reg);
 
+        // render boxes
         for (auto &&[id, rect, col] : reg.view<SDL_FRect const, SDL_Color const>().each())
         {
             SDL_SetRenderDrawColor(ren, col.r, col.g, col.b, col.a);
             SDL_RenderFillRect(ren, &rect);
         }
+
+        // render text
+        for (auto &&[id, text, pos] : reg.view<detail::unique_text, SDL_FPoint const>().each())
+            TTF_DrawRendererText(text.get(), pos.x, pos.y);
     }
 }
 
@@ -244,15 +240,169 @@ inline entt::entity spawn_player(scheduler &sched, context &ctx, entt::registry 
     reg.emplace<pos>(id) = {500.0f, 500.0f};
     reg.emplace<speed>(id, 100.0f);
 
-    move_around(sched, ctx, reg, id, pos{300.0f, 300.0f}, 100.0f);
+    move_around(sched, ctx, reg, id, pos{600.0f, 500.0f}, 100.0f);
 
     return id;
 }
 
+auto change_box_color(scheduler &sched, entt::registry &reg, entt::entity box) -> fire_and_forget
+{
+    SDL_Color const colors[]{
+        {255, 0, 0, 255},
+        {255, 127, 0, 255},
+        {255, 255, 0, 255},
+        {0, 255, 0, 255},
+        {0, 0, 255, 255},
+        {75, 0, 130, 255},
+        {148, 0, 211, 255},
+    };
+
+    while (true)
+    {
+        for (auto c : colors)
+        {
+            reg.get<SDL_Color>(box) = c;
+            co_await sched.stages[stage_id::update].sleep(500);
+        }
+    }
+}
+
+inline entt::entity spawn_color_box(scheduler &sched, entt::registry &reg)
+{
+    auto const id = reg.create();
+    reg.emplace<SDL_FRect>(id, 100.0f, 100.0f, 100.0f, 100.0f);
+    reg.emplace<SDL_Color>(id) = {0xff, 0x00, 0x00, 0xff};
+
+    change_box_color(sched, reg, id);
+
+    return id;
+}
+
+auto change_box_zoom(scheduler &sched, context &ctx, entt::registry &reg, entt::entity box) -> fire_and_forget
+{
+    auto const
+        zmin = 0.5f,
+        zmax = 1.5f,
+        zstep = 0.1f;
+
+    auto const &area = reg.get<SDL_FRect>(box);
+
+    auto const
+        ow = area.w,             // original w
+        oh = area.h,             // original h
+        cx = area.x + ow * 0.5f, // original center x
+        cy = area.y + oh * 0.5f; // original center y
+
+    float zoom = 1.0f;
+
+    while (true)
+    {
+        auto const
+            start_time = ctx.time.now,
+            duration = Uint64(1000),
+            end_time = start_time + duration;
+
+        auto smoothstep = [](float x)
+        { return x * x * (3 - 2 * x); };
+
+        while (ctx.time.now < end_time)
+        {
+            co_await sched.stages[stage_id::update].sched();
+
+            auto const
+                pct = float(ctx.time.now - start_time) / duration,
+                fx = smoothstep(pct),              // [0, 1]
+                zero_max_min = fx * (zmax - zmin), // [0, zmax - zmin]
+                min_max = zmin + zero_max_min;     // [zmin, zmax]
+
+            zoom = min_max;
+
+            auto const
+                w = ow * zoom,
+                h = oh * zoom;
+
+            reg.get<SDL_FRect>(box) = {
+                .x = cx - w * 0.5f,
+                .y = cy - h * 0.5f,
+                .w = w,
+                .h = h,
+            };
+        }
+    }
+}
+
+inline entt::entity spawn_zoom_box(scheduler &sched, context &ctx, entt::registry &reg)
+{
+    auto const id = reg.create();
+    reg.emplace<SDL_FRect>(id, 400.0f, 100.0f, 100.0f, 100.0f);
+    reg.emplace<SDL_Color>(id) = {0xff, 0x00, 0x00, 0xff};
+
+    change_box_zoom(sched, ctx, reg, id);
+
+    return id;
+}
+
+auto dialogue(dialogue_builder &dlg) -> fire_and_forget
+{
+    co_await dlg.say("NPC", "Hello player. Do you want to hear a secret?");
+
+    std::string_view secrets[]{
+        "Everything in this demo uses coroutines.",
+        "The profiler window will show you the runtime of any coroutine type,\nas long as you schedule it into a stage, with no extra setup.",
+        "The wandering box will follow you anywhere you click.",
+        "There is a coroutine that timed out already and was cancelled, check the console",
+        "You can add your own stages to the demo and order them as you want,\nfor example the ImGui stage is not a \"default\" stage.",
+    };
+    size_t const n_secrets = std::size(secrets);
+
+    // shuffle our secrets for extra spice :)
+    for (rsize_t i = n_secrets - 1; i > 0; --i)
+        std::swap(secrets[i], secrets[SDL_rand(i + 1)]);
+
+    size_t current_secret{};
+
+    while (true)
+    {
+        std::string_view constexpr options[]{"Yes", "No", "Maybe"};
+        uint32_t choice = co_await dlg.choose(std::span(options));
+
+#define alt(x) std::find(options, options + std::size(options), x) - options
+
+        switch (choice)
+        {
+        case alt("Yes"):
+            co_await dlg.say("NPC", secrets[current_secret]);
+            co_await dlg.say("NPC", "Do you want to hear another secret?");
+            current_secret = (current_secret + 1) % n_secrets;
+            break;
+
+        case alt("No"):
+            co_await dlg.say("NPC", "Ok, never mind :)");
+            co_return;
+
+        case alt("Maybe"):
+            co_await dlg.say("NPC", "I need a definite answer!");
+            break;
+        }
+
+#undef alt
+    }
+}
+
+auto imgui_widgets(scheduler &sched, context &ctx) -> fire_and_forget
+{
+    while (true)
+    {
+        co_await sched.stages[imgui_stage].sched();
+
+        coroutine_profiler(ctx.traces);
+    }
+}
+
 int main(int, char **)
 {
-    auto init_c = SDL_Init(SDL_INIT_VIDEO);
-    ENSURE(init_c, "Couldn't init SDL3");
+    auto init_sdl = SDL_Init(SDL_INIT_VIDEO);
+    ENSURE(init_sdl, "Couldn't init SDL3");
 
     auto win_flags = SDL_WINDOW_HIGH_PIXEL_DENSITY;
     auto win = SDL_CreateWindow("Modern C++ game example", 1280, 720, win_flags);
@@ -261,22 +411,46 @@ int main(int, char **)
     auto ren = SDL_CreateRenderer(win, nullptr);
     ENSURE(ren, "Couldn't create renderer");
 
+    auto init_ttf = TTF_Init();
+    ENSURE(init_ttf, "Couldn't init SDL ttf");
+
+    auto text_engine = TTF_CreateRendererTextEngine(ren);
+    ENSURE(text_engine, "Couldn't create text engine");
+
+    auto font = TTF_OpenFont("assets/fonts/Exo_2/static/Exo2-Regular.ttf", 24.0f);
+    ENSURE(font, "Couldn't open font");
+
     entt::registry reg;
 
-    // declare the scheduler
+    // declare the scheduler + context
     scheduler sched;
     context ctx;
 
+    dialogue_builder dlg{
+        .sched = &sched,
+        .ctx = &ctx,
+        .reg = &reg,
+        .eng = text_engine,
+        .font = font,
+        .position = {100.0f, 300.0f},
+    };
+
     // create all the coroutines you plan to submit initially
-    imgui_system(sched, ctx, win, ren);
+    imgui_system(sched, ctx, win, ren); // this handles ImGui setup + cleanup
+    imgui_widgets(sched, ctx);          // this handles the widgets
+
     render_task(sched, reg, ren);
+    dialogue(dlg);
 
+    timeout_showcase(
+        sched,
+        timeout(sched.stages[stage_id::update], 3500) //
+    );
+
+    // spawn some entities
     spawn_player(sched, ctx, reg);
-
-    {
-        auto stop2 = timeout(sched.stages[stage_id::update], 3500);
-        timeout_showcase(sched, stop2);
-    }
+    spawn_color_box(sched, reg);
+    spawn_zoom_box(sched, ctx, reg);
 
     // run the startup stage
     sched.stages[stage_id::startup].run(ctx);
@@ -318,6 +492,10 @@ int main(int, char **)
     }
 
     sched.stages[stage_id::cleanup].run(ctx); // finally run cleanup-related coros
+
+    TTF_CloseFont(font);
+    TTF_DestroyRendererTextEngine(text_engine);
+    TTF_Quit();
 
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);

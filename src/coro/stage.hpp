@@ -132,6 +132,7 @@ inline void stage_info::run(context &ctx)
     {
         auto t = ready_queue.front();
         ready_queue.pop();
+
         t.hnd.resume();
 
         auto const finish = SDL_GetTicks();
@@ -160,10 +161,11 @@ struct [[nodiscard]] stage_info::sched_awaiter final
 
     static constexpr bool await_ready() noexcept { return false; }
 
-    inline void await_suspend(std::coroutine_handle<> hnd,
+    inline auto await_suspend(std::coroutine_handle<> hnd,
                               std::source_location const &sl = std::source_location::current()) noexcept
     {
         s->schedule(hnd, sl);
+        return std::noop_coroutine();
     }
 
     static constexpr void await_resume() noexcept {}
@@ -177,10 +179,11 @@ struct [[nodiscard]] stage_info::sleep_awaiter final
 
     static constexpr bool await_ready() noexcept { return false; }
 
-    inline void await_suspend(std::coroutine_handle<> hnd,
+    inline auto await_suspend(std::coroutine_handle<> hnd,
                               std::source_location const &sl = std::source_location::current()) noexcept
     {
         s->schedule_after(hnd, ms, sl);
+        return std::noop_coroutine();
     }
 
     static constexpr void await_resume() noexcept {}

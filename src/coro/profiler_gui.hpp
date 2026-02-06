@@ -4,7 +4,7 @@
 #include <imgui.h>
 #include "coro/profiler.hpp"
 
-constexpr ImU32 color_by_depth(int level) noexcept
+constexpr ImU32 color_by_tag(uint32_t tag) noexcept
 {
     ImU32 colors[] = {
         IM_COL32(180, 120, 255, 255),
@@ -17,7 +17,7 @@ constexpr ImU32 color_by_depth(int level) noexcept
         IM_COL32(120, 255, 255, 255),
     };
 
-    return colors[level % std::size(colors)];
+    return colors[tag % std::size(colors)];
 }
 
 inline void coroutine_profiler(std::span<trace const> traces)
@@ -93,7 +93,8 @@ inline void coroutine_profiler(std::span<trace const> traces)
                     }
                 }
 
-                auto const depth = stack.size();
+                // auto const depth = stack.size();
+                auto const depth = 0; // TODO: enable the hierarchy back eventually
                 stack.push_back(i);
 
                 auto const x_start = origin.x + (e.start - min_time) * time_scale;
@@ -103,7 +104,7 @@ inline void coroutine_profiler(std::span<trace const> traces)
 
                 ImVec2 const p0(x_start, y_top);
                 ImVec2 const p1(x_end, y_bottom);
-                auto const color = color_by_depth(depth);
+                auto const color = color_by_tag((uint32_t)e.stage);
 
                 draw_list->AddRectFilled(p0, p1, color);
                 draw_list->AddText(ImVec2(x_start + 2, y_top + 2), IM_COL32_WHITE, e.name.data(), e.name.data() + e.name.size());

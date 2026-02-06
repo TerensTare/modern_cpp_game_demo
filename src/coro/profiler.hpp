@@ -10,6 +10,7 @@ enum class stage_id : uint32_t
     update,
     render,
     cleanup,
+    _custom,
 };
 
 struct trace final

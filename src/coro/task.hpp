@@ -8,7 +8,9 @@ template <typename T>
 struct task_promise;
 
 template <typename T = void>
-struct [[nodiscard("task is a RAII type")]] task final
+struct [[nodiscard("task is a RAII type and should be `co_await`.\n"
+                   "If this task is the topmost and you want to schedule it, note that tasks do not run unless you resume them.\n"
+                   "For this specific case, consider using fire_and_forget instead as return type.")]] task final
 {
     using promise_type = task_promise<T>;
     struct awaiter_type;
@@ -53,7 +55,7 @@ struct task_promise_base
 
     std::coroutine_handle<> cont = std::noop_coroutine();
 
-    static constexpr auto initial_suspend() noexcept { return std::suspend_never{}; }
+    static constexpr auto initial_suspend() noexcept { return std::suspend_always{}; }
     static constexpr final_awaiter final_suspend() noexcept;
 
     static constexpr void unhandled_exception() noexcept {}
@@ -80,7 +82,7 @@ struct task_promise_base<T>::final_awaiter final
 {
     static constexpr bool await_ready() noexcept { return false; }
 
-    inline auto await_suspend(std::coroutine_handle<task_promise<T>> hnd) const noexcept
+    inline static auto await_suspend(std::coroutine_handle<task_promise<T>> hnd) noexcept
     {
         return hnd.promise().cont;
     }
