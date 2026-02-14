@@ -7,30 +7,35 @@
 #include "coro/scheduler.hpp"
 #include "coro/task.hpp"
 
-namespace detail
+struct dialogue_text_tag final
 {
-    struct text_deleter final
-    {
-        inline void operator()(TTF_Text *text) const noexcept
-        {
-            TTF_DestroyText(text);
-        }
-    };
+};
 
-    using unique_text = std::unique_ptr<TTF_Text, text_deleter>;
-}
+struct text_data final
+{
+    TTF_Text *text;
+};
 
 struct dialogue_builder final
 {
     task<> say(std::string_view who, std::string_view what);
     task<uint32_t> choose(std::span<std::string_view const> options);
 
+    inline void cleanup()
+    {
+        auto &&pool = reg->storage<dialogue_text_tag const>();
+        reg->destroy(pool.begin(), pool.end());
+
+        position = origin;
+    }
+
     scheduler *sched;
     context *ctx;
     entt::registry *reg;
     TTF_TextEngine *eng;
     TTF_Font *font;
-    SDL_FPoint position;
+    SDL_FPoint origin;
+    SDL_FPoint position = origin; // internal
 };
 
 task<> dialogue_builder::say(std::string_view who, std::string_view what)
@@ -38,13 +43,14 @@ task<> dialogue_builder::say(std::string_view who, std::string_view what)
     // TODO: as a bonus, do longer pauses on punctuations.
 
     // invariant: the components might not be stable (storage) but the internal pointer to the text (ie. TTF_Text *) is
-    TTF_Text *text;
-    auto const id = reg->create();
-    reg->emplace<SDL_FPoint>(id, position);
-    text = reg->emplace<detail::unique_text>(id, TTF_CreateText(eng, font, who.data(), who.size())).get();
-
+    auto text = TTF_CreateText(eng, font, who.data(), who.size());
     TTF_AppendTextString(text, ": ", 2);
     // show who says the message + `: `
+
+    auto const id = reg->create();
+    reg->emplace<SDL_FPoint>(id, position);
+    reg->emplace<text_data>(id, text);
+    reg->emplace<dialogue_text_tag>(id);
 
     std::string message{what};
 
@@ -97,7 +103,8 @@ task<uint32_t> dialogue_builder::choose(std::span<std::string_view const> option
 
         auto const id = reg->create();
         reg->emplace<SDL_FPoint>(id, position);
-        reg->emplace<detail::unique_text>(id, text);
+        reg->emplace<text_data>(id, text);
+        reg->emplace<dialogue_text_tag>(id);
 
         // update the "cursor" position
         TTF_GetTextSize(text, &w, &h);

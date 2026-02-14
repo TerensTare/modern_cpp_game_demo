@@ -22,12 +22,10 @@ namespace detail
 
 // Register a new task to timeout after the given time in ms and return a stop token to listen for timeout.
 // Example:
-/*
-```cpp
-auto stop_token = timeout(sched, 1000); // timeout after 1 second
-my_task(sched, stop_token); // spawn your task; check for stops inside the task
-```
-*/
+// ```cpp
+// auto stop_token = timeout(sched, 1000); // timeout after 1 second
+// my_task(sched, stop_token); // spawn your task; check for stops inside the task
+// ```
 [[nodiscard("You should use the token to check for timeout")]]
 inline auto timeout(stage_info &stage, Uint64 ms) -> std::stop_token
 {

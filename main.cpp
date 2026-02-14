@@ -121,8 +121,8 @@ auto render_task(scheduler &sched, entt::registry &reg, SDL_Renderer *ren) -> fi
         }
 
         // render text
-        for (auto &&[id, text, pos] : reg.view<detail::unique_text, SDL_FPoint const>().each())
-            TTF_DrawRendererText(text.get(), pos.x, pos.y);
+        for (auto &&[id, text, pos] : reg.view<text_data, SDL_FPoint const>().each())
+            TTF_DrawRendererText(text.text, pos.x, pos.y);
     }
 }
 
@@ -371,9 +371,19 @@ auto dialogue(dialogue_builder &dlg) -> fire_and_forget
         switch (choice)
         {
         case alt("Yes"):
-            co_await dlg.say("NPC", secrets[current_secret]);
-            co_await dlg.say("NPC", "Do you want to hear another secret?");
-            current_secret = (current_secret + 1) % n_secrets;
+            co_await dlg.say("NPC", secrets[current_secret++]);
+            if (current_secret == n_secrets)
+            {
+                co_await dlg.say("NPC", "That was all the secrets I had for you. Do you want to hear them again?");
+                current_secret = 0;
+
+                for (rsize_t i = n_secrets - 1; i > 0; --i)
+                    std::swap(secrets[i], secrets[SDL_rand(i + 1)]);
+            }
+            else
+            {
+                co_await dlg.say("NPC", "Do you want to hear another secret?");
+            }
             break;
 
         case alt("No"):
@@ -432,7 +442,7 @@ int main(int, char **)
         .reg = &reg,
         .eng = text_engine,
         .font = font,
-        .position = {100.0f, 300.0f},
+        .origin = {100.0f, 250.0f},
     };
 
     // create all the coroutines you plan to submit initially
@@ -492,6 +502,8 @@ int main(int, char **)
     }
 
     sched.stages[stage_id::cleanup].run(ctx); // finally run cleanup-related coros
+
+    dlg.cleanup();
 
     TTF_CloseFont(font);
     TTF_DestroyRendererTextEngine(text_engine);

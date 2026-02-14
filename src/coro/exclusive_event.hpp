@@ -1,19 +1,18 @@
 
+
 #pragma once
 
 #include <optional>
 #include "coro/stage.hpp"
 #include "utils/compressed_pair.hpp"
 
-// TODO: fire_once event for permanent events
-
 template <typename T>
-struct event_awaiter;
+struct exclusive_event_awaiter;
 
 template <typename T = void>
-struct event final
+struct exclusive_event final
 {
-    inline explicit event(stage_info &s) : s{&s} {}
+    inline explicit exclusive_event(stage_info &s) : s{&s} {}
 
     inline void trigger()
         requires(std::is_void_v<T>)
@@ -25,50 +24,39 @@ struct event final
         requires(!std::is_void_v<T> && std::constructible_from<T, U &&>)
     inline void trigger(U &&val)
     {
-        first_and_value.right = static_cast<U &&>(val);
+        cont_and_value.right = static_cast<U &&>(val);
         return trigger_impl();
     }
 
-    inline event_awaiter<T> operator co_await() noexcept;
+    inline exclusive_event_awaiter<T> operator co_await() noexcept;
 
 private:
     inline void trigger_impl()
     {
-        auto awt = first_and_value.left;
-        while (awt)
-        {
-            s->schedule(awt->hnd, awt->suspend_point);
-            awt = awt->next;
-        }
-        first_and_value.left = awt;
+        auto state = std::exchange(cont_and_value.left, coro_state{nullptr});
+        s->schedule(state.hnd, state.suspend_point);
     }
 
     using value_type = std::conditional_t<std::is_void_v<T>, void, std::optional<T>>;
 
     stage_info *s;
-    compressed_pair<event_awaiter<T> *, value_type> first_and_value{
+    compressed_pair<coro_state, value_type> cont_and_value{
         .left = nullptr,
     };
 
-    friend event_awaiter;
+    friend exclusive_event_awaiter;
 };
 
 template <typename T>
-struct event_awaiter final
+struct exclusive_event_awaiter final
 {
-    event<T> *e;
-    std::coroutine_handle<> hnd;
-    std::source_location const &suspend_point;
-    event_awaiter *next = nullptr;
+    exclusive_event<T> *e;
 
     static constexpr bool await_ready() noexcept { return false; }
 
     constexpr void await_suspend(std::coroutine_handle<> hnd, std::source_location const &sl = std::source_location::current()) noexcept
     {
-        this->hnd = hnd;
-        suspend_point = sl;
-        next = e->first_and_value.left;
-        e->first_and_value.left = this;
+        e->cont_and_value.left = {hnd, sl};
     }
 
     constexpr decltype(auto) await_resume() noexcept
@@ -79,4 +67,4 @@ struct event_awaiter final
 };
 
 template <typename T>
-inline auto event<T>::operator co_await() noexcept -> event_awaiter<T> { return event_awaiter{this}; }
+inline auto exclusive_event<T>::operator co_await() noexcept -> exclusive_event_awaiter<T> { return exclusive_event_awaiter{this}; }
