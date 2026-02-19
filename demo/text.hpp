@@ -27,6 +27,7 @@ struct dialogue_builder final
         reg->destroy(pool.begin(), pool.end());
 
         position = origin;
+        TTF_CloseFont(font);
     }
 
     scheduler *sched;

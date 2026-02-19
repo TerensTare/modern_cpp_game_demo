@@ -39,11 +39,11 @@ struct [[nodiscard("task is a RAII type and should be `co_await`.\n"
 
     inline awaiter_type operator co_await() const;
 
-    std::coroutine_handle<promise_type> hnd; // TODO: make this private eventually
-
 private:
     inline explicit task(promise_type &promise) noexcept
         : hnd{std::coroutine_handle<promise_type>::from_promise(promise)} {}
+
+    std::coroutine_handle<promise_type> hnd;
 
     friend task_promise<T>;
 };

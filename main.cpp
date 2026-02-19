@@ -8,17 +8,38 @@
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_sdlrenderer3.h>
 
-#include "coro/event.hpp"
+#include "coro/events/event.hpp"
+
 #include "coro/scheduler.hpp"
-#include "coro/fire_and_forget.hpp"
 #include "coro/profiler_gui.hpp"
 #include "coro/timeout.hpp"
 
+#include "demo/file_dialog.hpp"
+#include "demo/async_io.hpp"
 #include "demo/text.hpp"
 
 // TODO:
-// - async file loading
 // - task allocator support
+// - SDL3_net example
+// - implicit timed-awaiter list sorted as priority queue
+/*
+    - show how to make animations that can be paused
+    ```cpp
+    fire_and_forget animate_player(context &ctx, time duration)
+    {
+        time elapsed{};
+        while (elapsed < duration)
+        {
+            auto dt = co_await sched.stage(stage_id::update);
+            if (ctx.paused)
+                continue;
+
+            player_frame = animate(...);
+            elapsed += dt;
+        }
+    }
+    ```
+*/
 
 #define ENSURE(val, msg)                                     \
     if (!(val))                                              \
@@ -342,8 +363,23 @@ inline entt::entity spawn_zoom_box(scheduler &sched, context &ctx, entt::registr
     return id;
 }
 
-auto dialogue(dialogue_builder &dlg) -> fire_and_forget
+auto load_font(async_io &io, char const *path, float ptsize) -> task<TTF_Font *>
 {
+    // TODO: must call `SDL_free` yourself on font's case, but not for other asset kinds
+    auto stream = co_await io.read(path);
+    auto fnt = TTF_OpenFontIO(stream, true, ptsize);
+    co_return fnt;
+}
+
+auto dialogue(async_io &io, dialogue_builder &dlg) -> fire_and_forget
+{
+    auto start = SDL_GetTicks();
+
+    // just to showcase async I/O, load the font here
+    dlg.font = co_await load_font(io, "assets/fonts/Exo_2/static/Exo2-Regular.ttf", 24.0f);
+
+    printf("Loading the font took %llums\n", SDL_GetTicks() - start);
+
     co_await dlg.say("NPC", "Hello player. Do you want to hear a secret?");
 
     std::string_view secrets[]{
@@ -352,6 +388,7 @@ auto dialogue(dialogue_builder &dlg) -> fire_and_forget
         "The wandering box will follow you anywhere you click.",
         "There is a coroutine that timed out already and was cancelled, check the console",
         "You can add your own stages to the demo and order them as you want,\nfor example the ImGui stage is not a \"default\" stage.",
+        "`D` is one of the keyboard keys that you can use on this demo",
     };
     size_t const n_secrets = std::size(secrets);
 
@@ -399,6 +436,34 @@ auto dialogue(dialogue_builder &dlg) -> fire_and_forget
     }
 }
 
+// Opens a window dialog for picking a file of choice
+auto window_dialog_demo(scheduler &sched, SDL_Window *win) -> fire_and_forget
+{
+    auto kb = SDL_GetKeyboardState(nullptr);
+    // wait until D is pressed
+    while (!kb[SDL_SCANCODE_D])
+    {
+        co_await sched.stages[stage_id::update].sched();
+    }
+
+    auto result = co_await file_dialog::open_file(
+        sched.stages[stage_id::update],
+        {
+            .win = win,
+        });
+
+    if (!result.is_ok())
+    {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Couldn't pick a file from dialog", SDL_GetError(), win);
+        co_return;
+    }
+
+    if (result.files_count == 0)
+        printf("You selected nothing...");
+    else
+        printf("You selected %.*s\n", (int)result.files[0].size(), result.files[0].data());
+}
+
 auto imgui_widgets(scheduler &sched, context &ctx) -> fire_and_forget
 {
     while (true)
@@ -427,21 +492,19 @@ int main(int, char **)
     auto text_engine = TTF_CreateRendererTextEngine(ren);
     ENSURE(text_engine, "Couldn't create text engine");
 
-    auto font = TTF_OpenFont("assets/fonts/Exo_2/static/Exo2-Regular.ttf", 24.0f);
-    ENSURE(font, "Couldn't open font");
-
     entt::registry reg;
 
     // declare the scheduler + context
     scheduler sched;
     context ctx;
 
+    async_io io;
+
     dialogue_builder dlg{
         .sched = &sched,
         .ctx = &ctx,
         .reg = &reg,
         .eng = text_engine,
-        .font = font,
         .origin = {100.0f, 250.0f},
     };
 
@@ -450,7 +513,8 @@ int main(int, char **)
     imgui_widgets(sched, ctx);          // this handles the widgets
 
     render_task(sched, reg, ren);
-    dialogue(dlg);
+    dialogue(io, dlg);
+    window_dialog_demo(sched, win);
 
     timeout_showcase(
         sched,
@@ -464,6 +528,8 @@ int main(int, char **)
 
     // run the startup stage
     sched.stages[stage_id::startup].run(ctx);
+
+    io.run_on(sched.stages[stage_id::update]);
 
     while (!sched.stop.stop_requested())
     {
@@ -505,7 +571,6 @@ int main(int, char **)
 
     dlg.cleanup();
 
-    TTF_CloseFont(font);
     TTF_DestroyRendererTextEngine(text_engine);
     TTF_Quit();
 

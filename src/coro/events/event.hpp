@@ -5,8 +5,6 @@
 #include "coro/stage.hpp"
 #include "utils/compressed_pair.hpp"
 
-// TODO: fire_once event for permanent events
-
 template <typename T>
 struct event_awaiter;
 
@@ -58,7 +56,7 @@ struct event_awaiter final
 {
     event<T> *e;
     std::coroutine_handle<> hnd;
-    std::source_location const &suspend_point;
+    std::source_location suspend_point;
     event_awaiter *next = nullptr;
 
     static constexpr bool await_ready() noexcept { return false; }
@@ -71,10 +69,10 @@ struct event_awaiter final
         e->first_and_value.left = this;
     }
 
-    constexpr decltype(auto) await_resume() noexcept
+    constexpr decltype(auto) await_resume() const noexcept
     {
         if constexpr (!std::is_void_v<T>)
-            return e->value.value();
+            return e->first_and_value.right.value();
     }
 };
 

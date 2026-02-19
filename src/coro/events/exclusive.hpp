@@ -59,10 +59,10 @@ struct exclusive_event_awaiter final
         e->cont_and_value.left = {hnd, sl};
     }
 
-    constexpr decltype(auto) await_resume() noexcept
+    constexpr decltype(auto) await_resume() const noexcept
     {
         if constexpr (!std::is_void_v<T>)
-            return e->value.value();
+            return e->cont_and_value.right.value();
     }
 };
 
